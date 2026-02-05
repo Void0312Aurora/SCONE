@@ -1,0 +1,36 @@
+### Python / venv
+.venv/
+venv/
+env/
+ENV/
+
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+*.egg-info/
+build/
+dist/
+
+### Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+### Jupyter
+.ipynb_checkpoints/
+
+### Project artifacts
+outputs/
+logs/
+plots/
+runs/
+checkpoints/
+data/
+datasets/

@@ -1,0 +1,16 @@
+demo: bouncing_ball_1d
+seed: 0
+dt: 0.005
+steps: 2000
+dtype: float64
+
+device: cuda
+
+params:
+  mass: 1.0
+  gravity: 9.81
+  restitution: 0.85
+  ground_height: 0.0
+  q0: 1.0
+  v0: 0.0
+
