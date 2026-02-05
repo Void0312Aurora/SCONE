@@ -1,0 +1,41 @@
+demo: disk_stack_2d
+seed: 0
+dt: 0.01
+steps: 500
+dtype: float64
+
+device: cuda
+
+params:
+  mass: 1.0
+  radius: 0.5
+  gravity: 9.81
+  ground_height: 0.0
+  friction_mu: 0.6
+  restitution: 0.0
+  contact_slop: 0.001
+  impact_velocity_min: 0.2
+  pgs_iters: 30
+  baumgarte_beta: 0.2
+
+  # 3 disks: two supported by ground, one resting on both.
+  q0:
+    - [-0.6, 0.5, 0.0]
+    - [0.6, 0.5, 0.0]
+    - [0.0, 1.3, 0.0]
+  v0:
+    - [0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
+
+sleep:
+  enabled: true
+  v_sleep: 0.05
+  v_wake: 0.1
+  steps_to_sleep: 20
+  freeze_core: true
+
+failsafe:
+  penetration_hard: 0.05
+  v_hard: 100.0
+  energy_factor_hard: 100.0

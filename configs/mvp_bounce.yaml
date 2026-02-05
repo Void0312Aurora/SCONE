@@ -12,9 +12,16 @@ params:
   restitution: 0.85
   ground_height: 0.0
   q_slop: 0.001
-  v_sleep: 0.1
+  impact_velocity_min: 0.1
   q0: 1.0
   v0: 0.0
+
+sleep:
+  enabled: true
+  v_sleep: 0.1
+  v_wake: 0.2
+  steps_to_sleep: 1
+  freeze_core: true
 
 failsafe:
   penetration_hard: 0.2

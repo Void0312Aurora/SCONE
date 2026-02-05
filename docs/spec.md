@@ -58,7 +58,12 @@
 **SHOULD**
 - `power.P_in`、`power.P_diss`（B 层账本）
 - `event.W_impulse`、`event.dE_event`（D 层离散账本；见下）
-- `contacts.lambda_n/lambda_t`、`contacts.complementarity_residual`
+- `contacts.items`：多接触统一结构（建议作为评测/日志的“稳定契约”）
+  - 每个 contact 至少包含：`id`, `phi`, `n`, `lambda_n`, `lambda_t`, `mode`
+  - `lambda_t` 建议为切向冲量的**世界坐标向量**（与 `n` 同维；2D 为 2、3D 为 3），或至少保证能无歧义还原为世界向量（例如额外提供切向基/`t`）。
+  - `mode` 建议使用稳定枚举（便于后续 PGS/摩擦扩展不重构日志）：`0=separated, 1=impact, 2=resting, 3=active, 4=sliding, 5=sticking`
+  - 推荐补充：`body_i/body_j`（用于 sleep islands 与堆叠）、`mode_name`（可读）、`phi_next`
+- `contacts.complementarity_residual_max`（或等价互补残差统计）
 - `solver.iters`、`solver.status`
 - `failsafe.alpha_blend`（若使用混合/插值回退）
 
@@ -66,7 +71,7 @@
 - `power`: `P_in`（输入功率）、`P_diss`（耗散功率，期望 `>=0`）。
 - `event`: 事件层离散账本（推荐 `W_impulse`, `dE_event`；见 5.4）。
 - `constraints`: 位置/速度约束残差与投影/乘子信息（若启用）。
-- `contacts`: 接触点、穿透深度、冲量、摩擦模式、互补残差（若启用）。
+- `contacts`: 接触集合与统计量；推荐使用 `contacts.items` 作为统一的多接触数据结构（见上）。
 - `failsafe`: 是否触发回退、回退原因码、回退前后误差对比（关键用于工程可控与论文实验）。
 
 ## 4. 核心接口（Engine-level API）
@@ -153,6 +158,11 @@ EventLayer.resolve(x***, dt, context) -> (x_next, diag_D)
   - `event.dE_event`：事件导致的总能量变化（含恢复系数/塑性/摩擦等模型项）
   - 若需要与 B 层统一到“功率”，应明确采用 `event.W_impulse / dt` 的约定并标注为派生量。
 - 提供 fail-safe：当求解失败/违反基本不等式（例如产生能量爆炸或严重穿透）时回退到基线策略。
+
+**通用 Sleep/Resting 策略（面向堆叠的工程必需）**
+- 休眠不应只写死在某个 demo（例如 bouncing ball）里；推荐实现为可复用策略/管理器（如 `SleepManager`），以 `contacts.items` 的接触图为输入形成 **sleep islands**。
+- 典型规则：当一个 island 被静态环境（地面/静态刚体）支撑，且全岛速度/角速度长期低于阈值，则将其标记为 sleeping，并可选择冻结 (A)/(B) 的推进（提升稳定性与性能）。
+- 休眠状态应输出到 diagnostics（建议：`sleep.sleeping_mask`、`sleep.sleeping_count`），并影响接触 `mode`（例如标记为 `resting`），以避免后续接入 PGS 时重构日志与评测。
 
 ## 6. Fail-safe 与确定性（Determinism）
 
@@ -253,6 +263,8 @@ EventLayer.resolve(x***, dt, context) -> (x_next, diag_D)
    - (1) 耗散 + 长时稳定（更像方法论文）
    - (2) 接触堆叠 + 摩擦（更像引擎/图形）
    - (3) 关节约束 + 接触（更像机器人）
+
+> 当前选择：**(2) 接触堆叠 + 摩擦**。
 2. **技术栈（建议二选一）**
    - Python + JAX（偏可微与研究迭代）
    - Python + PyTorch（偏生态与工程普适）

@@ -1,2 +1,1 @@
-__all__ = ["toy"]
-
+__all__ = ["rigid2d", "toy"]
