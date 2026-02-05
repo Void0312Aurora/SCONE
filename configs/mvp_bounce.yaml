@@ -11,6 +11,12 @@ params:
   gravity: 9.81
   restitution: 0.85
   ground_height: 0.0
+  q_slop: 0.001
+  v_sleep: 0.1
   q0: 1.0
   v0: 0.0
 
+failsafe:
+  penetration_hard: 0.2
+  v_hard: 50.0
+  energy_factor_hard: 100.0

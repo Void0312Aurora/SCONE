@@ -66,7 +66,8 @@ class Engine:
         d_e_d = e_total_d - e_total_c
 
         p_in = torch.tensor(0.0, device=e_total_d.device, dtype=e_total_d.dtype)
-        p_diss = torch.clamp(-d_e_b / dt, min=0.0)
+        p_diss_signed = -d_e_b / dt
+        p_diss = torch.clamp(p_diss_signed, min=0.0)
 
         diagnostics: Diagnostics = {
             "energy": {
@@ -78,8 +79,8 @@ class Engine:
                 "dE_C": d_e_c,
                 "dE_D": d_e_d,
             },
-            "power": {"P_in": p_in, "P_diss": p_diss},
-            "failsafe": {"triggered": False, "reason": ""},
+            "power": {"P_in": p_in, "P_diss": p_diss, "P_diss_signed": p_diss_signed},
+            "failsafe": {"triggered": False, "reason": "", "soft_reasons": []},
         }
 
         for diag in (diag_a, diag_b, diag_c, diag_d):
@@ -91,8 +92,22 @@ class Engine:
                 else:
                     diagnostics[key] = value
 
-        if not _all_finite_state(state_d):
-            diagnostics["failsafe"] = {"triggered": True, "reason": "non_finite"}
+        soft_reasons: list[str] = []
+        if bool((p_diss_signed < -1e-12).item()):
+            soft_reasons.append("dissipation_energy_increase")
+        diagnostics["failsafe"]["soft_reasons"] = soft_reasons
+
+        hard_reason = _hard_failsafe_reason(
+            state_before=state,
+            state_after=state_d,
+            energy_before=e_total_0,
+            energy_after=e_total_d,
+            diagnostics=diagnostics,
+            context=context,
+        )
+        if hard_reason is not None:
+            diagnostics["failsafe"]["triggered"] = True
+            diagnostics["failsafe"]["reason"] = hard_reason
             return state, diagnostics
 
         return state_d, diagnostics
@@ -101,3 +116,51 @@ class Engine:
 def _all_finite_state(state: State) -> bool:
     return bool(torch.isfinite(state.q).all().item() and torch.isfinite(state.v).all().item())
 
+
+def _hard_failsafe_reason(
+    *,
+    state_before: State,
+    state_after: State,
+    energy_before: torch.Tensor,
+    energy_after: torch.Tensor,
+    diagnostics: Diagnostics,
+    context: dict[str, Any],
+) -> str | None:
+    del state_before
+
+    if not _all_finite_state(state_after):
+        return "non_finite"
+
+    failsafe_cfg = context.get("failsafe", {}) if isinstance(context, dict) else {}
+    if not isinstance(failsafe_cfg, dict):
+        failsafe_cfg = {}
+
+    penetration_hard = failsafe_cfg.get("penetration_hard")
+    if penetration_hard is not None:
+        penetration_max = diagnostics.get("contacts", {}).get("penetration_max")
+        if isinstance(penetration_max, torch.Tensor):
+            penetration_value = float(penetration_max.detach().max().cpu().item())
+        else:
+            penetration_value = float(penetration_max or 0.0)
+        if penetration_value > float(penetration_hard):
+            return "penetration_hard"
+
+    v_hard = failsafe_cfg.get("v_hard")
+    if v_hard is not None:
+        max_abs_v = float(state_after.v.detach().abs().max().cpu().item())
+        if max_abs_v > float(v_hard):
+            return "velocity_hard"
+
+    energy_abs_hard = failsafe_cfg.get("energy_abs_hard")
+    if energy_abs_hard is not None:
+        if float(energy_after.detach().abs().cpu().item()) > float(energy_abs_hard):
+            return "energy_abs_hard"
+
+    energy_factor_hard = failsafe_cfg.get("energy_factor_hard")
+    if energy_factor_hard is not None:
+        base = float(energy_before.detach().abs().cpu().item())
+        if base > 0.0:
+            if float(energy_after.detach().abs().cpu().item()) > float(energy_factor_hard) * base:
+                return "energy_factor_hard"
+
+    return None

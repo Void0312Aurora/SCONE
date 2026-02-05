@@ -120,6 +120,7 @@ def main() -> None:
     set_determinism(seed=seed, deterministic=args.deterministic)
 
     params: dict[str, Any] = dict(config.get("params", {}))
+    failsafe_cfg: dict[str, Any] = dict(config.get("failsafe", {}))
     if demo in {"harmonic_1d", "damped_oscillator_1d"}:
         system = HarmonicOscillator1D(
             mass=float(params["mass"]),
@@ -145,8 +146,11 @@ def main() -> None:
         constraints = NoOpConstraintLayer()
         events = BouncingBallEventLayer(
             mass=float(params["mass"]),
+            gravity=float(params["gravity"]),
             restitution=float(params.get("restitution", 1.0)),
             ground_height=float(params.get("ground_height", 0.0)),
+            q_slop=float(params.get("q_slop", 1e-3)),
+            v_sleep=float(params.get("v_sleep", 0.1)),
         )
     else:
         raise ValueError(f"Unknown demo: {demo}")
@@ -180,8 +184,9 @@ def main() -> None:
         "contacts.penetration_max": [],
     }
 
+    context: dict[str, Any] = {"failsafe": failsafe_cfg}
     for step_index in range(steps):
-        next_state, diag = engine.step(state=state, dt=dt, context={})
+        next_state, diag = engine.step(state=state, dt=dt, context=context)
         flat_diag = _flatten_diagnostics(diag)
         row = {"step": step_index, "t": float(next_state.t), "q": _to_float(next_state.q), "v": _to_float(next_state.v)}
         row.update(flat_diag)
@@ -212,6 +217,7 @@ def main() -> None:
         "dt": dt,
         "steps": steps,
         "params": params,
+        "failsafe": failsafe_cfg,
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote outputs to: {out_dir}")
