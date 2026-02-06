@@ -14,7 +14,7 @@ import yaml
 
 from scone.diagnostics import Diagnostics
 from scone.engine import Engine
-from scone.layers.constraints import NoOpConstraintLayer
+from scone.layers.constraints import LinearConstraintProjectionLayer, NoOpConstraintLayer
 from scone.layers.dissipation import LinearDampingLayer
 from scone.layers.events import (
     BouncingBallEventLayer,
@@ -141,6 +141,29 @@ def _plot_series(out_dir: Path, series: dict[str, list[float]]) -> None:
         plot_xy("t", ["contacts.penetration_max"], "penetration.png", "Penetration")
 
 
+def _build_constraint_layer(config: dict[str, Any]) -> NoOpConstraintLayer | LinearConstraintProjectionLayer:
+    kind = str(config.get("kind", "none")).lower()
+    if kind == "linear":
+        return LinearConstraintProjectionLayer(
+            eps=float(config.get("eps", 1e-9)),
+            enforce_position=bool(config.get("enforce_position", True)),
+            enforce_velocity=bool(config.get("enforce_velocity", True)),
+        )
+    return NoOpConstraintLayer()
+
+
+def _constraint_context(config: dict[str, Any], *, device: torch.device, dtype: torch.dtype) -> dict[str, torch.Tensor]:
+    data = config.get("data", {})
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, torch.Tensor] = {}
+    for key in ("A_pos", "b_pos", "A_vel", "b_vel"):
+        if key not in data:
+            continue
+        out[key] = torch.as_tensor(data[key], device=device, dtype=dtype)
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
@@ -163,6 +186,7 @@ def main() -> None:
     params: dict[str, Any] = dict(config.get("params", {}))
     failsafe_cfg: dict[str, Any] = dict(config.get("failsafe", {}))
     sleep_cfg: dict[str, Any] = dict(config.get("sleep", {}))
+    constraint_cfg: dict[str, Any] = dict(config.get("constraints", {}))
     if demo in {"harmonic_1d", "damped_oscillator_1d"}:
         system = HarmonicOscillator1D(
             mass=float(params["mass"]),
@@ -173,7 +197,7 @@ def main() -> None:
         symplectic = SymplecticEulerSeparable(system=system)
         damping = float(params.get("damping", 0.0))
         dissipation = LinearDampingLayer(damping=damping)
-        constraints = NoOpConstraintLayer()
+        constraints = _build_constraint_layer(constraint_cfg)
         events = NoOpEventLayer()
     elif demo == "bouncing_ball_1d":
         system = BouncingBall1D(
@@ -185,7 +209,7 @@ def main() -> None:
         )
         symplectic = SymplecticEulerSeparable(system=system)
         dissipation = LinearDampingLayer(damping=0.0)
-        constraints = NoOpConstraintLayer()
+        constraints = _build_constraint_layer(constraint_cfg)
         sleep_manager = None
         if sleep_cfg:
             sleep_manager = SleepManager(
@@ -218,7 +242,7 @@ def main() -> None:
         )
         symplectic = SymplecticEulerSeparable(system=system)
         dissipation = LinearDampingLayer(damping=0.0)
-        constraints = NoOpConstraintLayer()
+        constraints = _build_constraint_layer(constraint_cfg)
         sleep_manager = None
         if sleep_cfg:
             sleep_manager = SleepManager(
@@ -255,7 +279,7 @@ def main() -> None:
         )
         symplectic = SymplecticEulerSeparable(system=system)
         dissipation = LinearDampingLayer(damping=0.0)
-        constraints = NoOpConstraintLayer()
+        constraints = _build_constraint_layer(constraint_cfg)
         sleep_manager = None
         if sleep_cfg:
             sleep_manager = SleepManager(
@@ -281,6 +305,7 @@ def main() -> None:
             contact_slop=float(params.get("contact_slop", 1e-3)),
             impact_velocity_min=float(params.get("impact_velocity_min", 0.1)),
             pgs_iters=int(params.get("pgs_iters", 20)),
+            pgs_relaxation=float(params.get("pgs_relaxation", 1.0)),
             baumgarte_beta=float(params.get("baumgarte_beta", 0.2)),
             residual_tol=float(params.get("residual_tol", 1e-6)),
             warm_start=bool(params.get("warm_start", True)),
@@ -331,6 +356,9 @@ def main() -> None:
             series[f"y{body_i}"] = []
 
     context: dict[str, Any] = {"failsafe": failsafe_cfg}
+    constraints_context = _constraint_context(constraint_cfg, device=device, dtype=dtype)
+    if constraints_context:
+        context["constraints"] = constraints_context
     for step_index in range(steps):
         next_state, diag = engine.step(state=state, dt=dt, context=context)
         flat_diag = _flatten_diagnostics(diag)

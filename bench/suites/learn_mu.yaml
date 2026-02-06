@@ -8,10 +8,33 @@ thresholds:
     learn.loss_ratio_val: 0.05
     learn.ood_enabled: true
     learn.loss_ratio_ood: 0.05
+    learn.eval_val.solver.max_iter_ratio: 0.0
+    learn.eval_val.solver.diverged_ratio: 0.0
+    learn.eval_val.solver.residual_max: 0.001
+    learn.eval_val.failsafe.triggered_any: false
+    learn.eval_val.failsafe.soft_triggered_any: false
+    learn.eval_val.failsafe.alpha_blend_drop_max: 0.0
+    learn.eval_ood.solver.max_iter_ratio: 0.0
+    learn.eval_ood.solver.diverged_ratio: 0.0
+    learn.eval_ood.solver.residual_max: 0.001
+    learn.eval_ood.failsafe.triggered_any: false
+    learn.eval_ood.failsafe.soft_triggered_any: false
+    learn.eval_ood.failsafe.alpha_blend_drop_max: 0.0
 
   learn_mu_stack_id_reg:
     learn.mu_abs_error: 0.1
     learn.loss_ratio_val: 0.05
     learn.ood_enabled: true
     learn.loss_ratio_ood: 0.05
-
+    learn.eval_val.solver.max_iter_ratio: 0.0
+    learn.eval_val.solver.diverged_ratio: 0.0
+    learn.eval_val.solver.residual_max: 0.001
+    learn.eval_val.failsafe.triggered_any: false
+    learn.eval_val.failsafe.soft_triggered_any: false
+    learn.eval_val.failsafe.alpha_blend_drop_max: 0.0
+    learn.eval_ood.solver.max_iter_ratio: 0.0
+    learn.eval_ood.solver.diverged_ratio: 0.0
+    learn.eval_ood.solver.residual_max: 0.001
+    learn.eval_ood.failsafe.triggered_any: false
+    learn.eval_ood.failsafe.soft_triggered_any: false
+    learn.eval_ood.failsafe.alpha_blend_drop_max: 0.0

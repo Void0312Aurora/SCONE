@@ -11,7 +11,7 @@ import torch
 import yaml
 
 from scone.engine import Engine
-from scone.layers.constraints import NoOpConstraintLayer
+from scone.layers.constraints import LinearConstraintProjectionLayer, NoOpConstraintLayer
 from scone.layers.dissipation import LinearDampingLayer
 from scone.layers.events import (
     BouncingBallEventLayer,
@@ -68,6 +68,29 @@ def _to_float(value: Any, *, default: float = 0.0) -> float:
     return float(default)
 
 
+def _build_constraint_layer(config: dict[str, Any]) -> NoOpConstraintLayer | LinearConstraintProjectionLayer:
+    kind = str(config.get("kind", "none")).lower()
+    if kind == "linear":
+        return LinearConstraintProjectionLayer(
+            eps=float(config.get("eps", 1e-9)),
+            enforce_position=bool(config.get("enforce_position", True)),
+            enforce_velocity=bool(config.get("enforce_velocity", True)),
+        )
+    return NoOpConstraintLayer()
+
+
+def _constraint_context(config: dict[str, Any], *, device: torch.device, dtype: torch.dtype) -> dict[str, torch.Tensor]:
+    data = config.get("data", {})
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, torch.Tensor] = {}
+    for key in ("A_pos", "b_pos", "A_vel", "b_vel"):
+        if key not in data:
+            continue
+        out[key] = torch.as_tensor(data[key], device=device, dtype=dtype)
+    return out
+
+
 @dataclass(frozen=True)
 class Rollout:
     q: torch.Tensor
@@ -88,6 +111,7 @@ def _build_engine_and_state(
     params: dict[str, Any] = dict(config.get("params", {}))
     failsafe_cfg: dict[str, Any] = dict(config.get("failsafe", {}))
     sleep_cfg: dict[str, Any] = dict(config.get("sleep", {}))
+    constraint_cfg: dict[str, Any] = dict(config.get("constraints", {}))
 
     sleep_manager = None
     if sleep_cfg:
@@ -111,7 +135,7 @@ def _build_engine_and_state(
         symplectic = SymplecticEulerSeparable(system=system)
         damping = float(params.get("damping", 0.0))
         dissipation = LinearDampingLayer(damping=damping)
-        constraints = NoOpConstraintLayer()
+        constraints = _build_constraint_layer(constraint_cfg)
         events = NoOpEventLayer()
     elif demo == "bouncing_ball_1d":
         system = BouncingBall1D(
@@ -123,7 +147,7 @@ def _build_engine_and_state(
         )
         symplectic = SymplecticEulerSeparable(system=system)
         dissipation = LinearDampingLayer(damping=0.0)
-        constraints = NoOpConstraintLayer()
+        constraints = _build_constraint_layer(constraint_cfg)
         events = BouncingBallEventLayer(
             mass=float(params["mass"]),
             gravity=float(params["gravity"]),
@@ -145,7 +169,7 @@ def _build_engine_and_state(
         )
         symplectic = SymplecticEulerSeparable(system=system)
         dissipation = LinearDampingLayer(damping=0.0)
-        constraints = NoOpConstraintLayer()
+        constraints = _build_constraint_layer(constraint_cfg)
         inertia = float(params.get("inertia", 0.5 * float(params["mass"]) * float(params["radius"]) ** 2))
         events = DiskGroundContactEventLayer(
             mass=float(params["mass"]),
@@ -171,7 +195,7 @@ def _build_engine_and_state(
         )
         symplectic = SymplecticEulerSeparable(system=system)
         dissipation = LinearDampingLayer(damping=0.0)
-        constraints = NoOpConstraintLayer()
+        constraints = _build_constraint_layer(constraint_cfg)
         inertia = float(params.get("inertia", 0.5 * float(params["mass"]) * float(params["radius"]) ** 2))
         friction_mu_pair = params.get("friction_mu_pair")
         events = DiskContactPGSEventLayer(
@@ -186,6 +210,7 @@ def _build_engine_and_state(
             contact_slop=float(params.get("contact_slop", 1e-3)),
             impact_velocity_min=float(params.get("impact_velocity_min", 0.1)),
             pgs_iters=int(params.get("pgs_iters", 20)),
+            pgs_relaxation=float(params.get("pgs_relaxation", 1.0)),
             baumgarte_beta=float(params.get("baumgarte_beta", 0.2)),
             residual_tol=float(params.get("residual_tol", 1e-6)),
             warm_start=bool(params.get("warm_start", True)),
@@ -208,6 +233,9 @@ def _build_engine_and_state(
         t=0.0,
     )
     context: dict[str, Any] = {"failsafe": failsafe_cfg}
+    constraints_context = _constraint_context(constraint_cfg, device=device, dtype=dtype)
+    if constraints_context:
+        context["constraints"] = constraints_context
     return engine, state0, context, dt, steps, demo
 
 
@@ -235,11 +263,14 @@ def _run_rollout(
         "solver.iters": [],
         "sleep.sleeping_count": [],
         "failsafe.triggered": [],
+        "failsafe.soft_triggered": [],
+        "failsafe.alpha_blend": [],
     }
 
     mode_counts_total: dict[str, int] = {}
     solver_status_counts: dict[str, int] = {}
     failsafe_reason_counts: dict[str, int] = {}
+    failsafe_soft_reason_counts: dict[str, int] = {}
 
     for _ in range(steps):
         state, diag = engine.step(state=state, dt=dt, context=context)
@@ -276,6 +307,21 @@ def _run_rollout(
             reason = str(failsafe.get("reason", ""))
             failsafe_reason_counts[reason] = failsafe_reason_counts.get(reason, 0) + 1
 
+        soft_reasons = failsafe.get("soft_reasons", [])
+        soft_step_triggered = False
+        if isinstance(soft_reasons, list):
+            for reason in soft_reasons:
+                reason_name = str(reason)
+                if not reason_name:
+                    continue
+                failsafe_soft_reason_counts[reason_name] = failsafe_soft_reason_counts.get(reason_name, 0) + 1
+                soft_step_triggered = True
+        elif isinstance(soft_reasons, str) and soft_reasons:
+            failsafe_soft_reason_counts[soft_reasons] = failsafe_soft_reason_counts.get(soft_reasons, 0) + 1
+            soft_step_triggered = True
+        series["failsafe.soft_triggered"].append(1.0 if soft_step_triggered else 0.0)
+        series["failsafe.alpha_blend"].append(_to_float(failsafe.get("alpha_blend"), default=1.0))
+
     q_seq = torch.stack(q_hist) if q_hist else torch.zeros((0,))
     v_seq = torch.stack(v_hist) if v_hist else torch.zeros((0,))
 
@@ -283,6 +329,19 @@ def _run_rollout(
     drift_abs_max = float(max(abs(e - e_total0_value) for e in e_series)) if e_series else 0.0
     denom = max(1e-12, abs(e_total0_value))
     drift_rel_max = float(drift_abs_max / denom)
+    solver_status_counts = {str(k): int(v) for k, v in solver_status_counts.items()}
+    for key in ("converged", "max_iter", "diverged", "na"):
+        solver_status_counts[key] = int(solver_status_counts.get(key, 0))
+
+    status_steps = int(sum(solver_status_counts.values()))
+    max_iter_count = int(solver_status_counts.get("max_iter", 0))
+    converged_count = int(solver_status_counts.get("converged", 0))
+    diverged_count = int(solver_status_counts.get("diverged", 0))
+    na_count = int(solver_status_counts.get("na", 0))
+    max_iter_ratio = float(max_iter_count / max(1, status_steps)) if status_steps > 0 else 0.0
+    converged_ratio = float(converged_count / max(1, status_steps)) if status_steps > 0 else 0.0
+    diverged_ratio = float(diverged_count / max(1, status_steps)) if status_steps > 0 else 0.0
+    na_ratio = float(na_count / max(1, status_steps)) if status_steps > 0 else 0.0
 
     summary: dict[str, Any] = {
         "demo": demo,
@@ -308,6 +367,15 @@ def _run_rollout(
             "iters_max": float(max(series["solver.iters"]) if steps else 0.0),
             "residual_max": float(max(series["solver.residual_max"]) if steps else 0.0),
             "status_counts": solver_status_counts,
+            "status_steps": status_steps,
+            "max_iter_steps": max_iter_count,
+            "converged_steps": converged_count,
+            "diverged_steps": diverged_count,
+            "na_steps": na_count,
+            "max_iter_ratio": max_iter_ratio,
+            "converged_ratio": converged_ratio,
+            "diverged_ratio": diverged_ratio,
+            "na_ratio": na_ratio,
         },
         "sleep": {
             "sleeping_count_final": int(series["sleep.sleeping_count"][-1]) if steps else 0,
@@ -317,6 +385,13 @@ def _run_rollout(
             "triggered_any": bool(any(v > 0.0 for v in series["failsafe.triggered"])),
             "triggered_steps": int(sum(1 for v in series["failsafe.triggered"] if v > 0.0)),
             "reason_counts": failsafe_reason_counts,
+            "soft_triggered_any": bool(any(v > 0.0 for v in series["failsafe.soft_triggered"])),
+            "soft_triggered_steps": int(sum(1 for v in series["failsafe.soft_triggered"] if v > 0.0)),
+            "soft_reason_counts": failsafe_soft_reason_counts,
+            "alpha_blend_min": float(min(series["failsafe.alpha_blend"]) if steps else 1.0),
+            "alpha_blend_mean": float(sum(series["failsafe.alpha_blend"]) / max(1, steps)),
+            "alpha_blend_drop_max": float(max(0.0, 1.0 - (min(series["failsafe.alpha_blend"]) if steps else 1.0))),
+            "alpha_blend_drop_mean": float(max(0.0, 1.0 - (sum(series["failsafe.alpha_blend"]) / max(1, steps)))),
         },
     }
     return Rollout(q=q_seq, v=v_seq, series=series, summary=summary)

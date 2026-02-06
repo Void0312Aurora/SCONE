@@ -6,24 +6,28 @@ thresholds:
   harmonic_1d:
     energy.drift_rel_max: 0.05
     failsafe.triggered_any: false
+    failsafe.alpha_blend_drop_max: 0.0
     determinism.max_abs_dq: 0.0
     determinism.max_abs_dv: 0.0
 
   damped_oscillator_1d:
     # Energy is expected to decrease; we do not gate on drift here.
     failsafe.triggered_any: false
+    failsafe.alpha_blend_drop_max: 0.0
     determinism.max_abs_dq: 0.0
     determinism.max_abs_dv: 0.0
 
   bouncing_ball_1d:
     contacts.penetration_max: 0.02
     failsafe.triggered_any: false
+    failsafe.alpha_blend_drop_max: 0.0
     determinism.max_abs_dq: 0.0
     determinism.max_abs_dv: 0.0
 
   disk_roll_2d:
     contacts.penetration_max: 0.005
     failsafe.triggered_any: false
+    failsafe.alpha_blend_drop_max: 0.0
     determinism.max_abs_dq: 0.0
     determinism.max_abs_dv: 0.0
 
@@ -31,6 +35,11 @@ thresholds:
     # Slightly looser than `mvp.yaml` to accommodate OOD dt stress-cases.
     contacts.penetration_max: 0.006
     solver.residual_max: 0.001
+    solver.max_iter_ratio: 0.0
+    solver.diverged_ratio: 0.0
+    solver.na_ratio: 0.0
     failsafe.triggered_any: false
+    failsafe.soft_triggered_any: false
+    failsafe.alpha_blend_drop_max: 0.0
     determinism.max_abs_dq: 0.0
     determinism.max_abs_dv: 0.0

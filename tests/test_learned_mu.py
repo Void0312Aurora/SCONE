@@ -1,6 +1,6 @@
 import torch
 
-from scone.learned.mu import ScalarMu
+from scone.learned.mu import ContactMuMLP, ContactMuMaterialMLP, ScalarMu
 from scone.layers.events import DiskGroundContactEventLayer
 from scone.state import State
 
@@ -61,3 +61,63 @@ def test_scalar_mu_can_be_fit_from_one_supervised_step() -> None:
     assert abs(mu_fit - mu_true) < 5e-2
     assert float(loss.detach().cpu().item()) < 0.1 * float(loss0)
 
+
+def test_contact_mu_mlp_output_is_bounded_and_differentiable() -> None:
+    device = torch.device("cpu")
+    dtype = torch.float32
+
+    model = ContactMuMLP(init_mu=0.3, mu_max=1.0, hidden_dim=8, device=device, dtype=dtype)
+    mu = model(
+        phi=torch.tensor(-0.01, device=device, dtype=dtype),
+        vn=torch.tensor(-1.5, device=device, dtype=dtype),
+        vt=torch.tensor(2.0, device=device, dtype=dtype),
+        is_pair=torch.tensor(1.0, device=device, dtype=dtype),
+    )
+    assert float(mu.detach().cpu().item()) >= 0.0
+    assert float(mu.detach().cpu().item()) <= 1.0
+
+    target = torch.tensor(0.7, device=device, dtype=dtype)
+    loss = (mu - target) ** 2
+    loss.backward()
+
+    total_grad = torch.tensor(0.0, device=device, dtype=dtype)
+    for param in model.parameters():
+        if param.grad is not None:
+            assert torch.isfinite(param.grad).all()
+            total_grad = total_grad + param.grad.abs().sum()
+    assert float(total_grad.detach().cpu().item()) > 0.0
+
+
+def test_contact_mu_material_mlp_output_is_bounded_and_differentiable() -> None:
+    device = torch.device("cpu")
+    dtype = torch.float32
+
+    model = ContactMuMaterialMLP(
+        init_mu=0.3,
+        mu_max=1.0,
+        hidden_dim=8,
+        max_material_id=4,
+        device=device,
+        dtype=dtype,
+    )
+    mu = model(
+        phi=torch.tensor(-0.01, device=device, dtype=dtype),
+        vn=torch.tensor(-1.5, device=device, dtype=dtype),
+        vt=torch.tensor(2.0, device=device, dtype=dtype),
+        is_pair=torch.tensor(1.0, device=device, dtype=dtype),
+        material_i=torch.tensor(2.0, device=device, dtype=dtype),
+        material_j=torch.tensor(4.0, device=device, dtype=dtype),
+    )
+    assert float(mu.detach().cpu().item()) >= 0.0
+    assert float(mu.detach().cpu().item()) <= 1.0
+
+    target = torch.tensor(0.7, device=device, dtype=dtype)
+    loss = (mu - target) ** 2
+    loss.backward()
+
+    total_grad = torch.tensor(0.0, device=device, dtype=dtype)
+    for param in model.parameters():
+        if param.grad is not None:
+            assert torch.isfinite(param.grad).all()
+            total_grad = total_grad + param.grad.abs().sum()
+    assert float(total_grad.detach().cpu().item()) > 0.0

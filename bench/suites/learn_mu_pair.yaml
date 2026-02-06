@@ -4,8 +4,44 @@ suite: learn_mu_pair
 # Omitted keys are not checked for that demo.
 thresholds:
   learn_mu_pair_stack_id:
+    learn.mu_ground_abs_error: 0.08
     learn.mu_pair_abs_error: 0.05
+    learn.mu_gap_abs_error: 0.05
+    learn.mu_gap_sign_correct: true
     learn.loss_ratio_val: 0.1
     learn.ood_enabled: true
     learn.loss_ratio_ood: 0.2
+    learn.loss_ratio_ood_worst: 0.2
+    learn.eval_val.solver.max_iter_ratio: 0.2
+    learn.eval_val.solver.diverged_ratio: 0.0
+    learn.eval_val.solver.residual_max: 0.001
+    learn.eval_val.failsafe.triggered_any: false
+    learn.eval_val.failsafe.soft_triggered_any: false
+    learn.eval_val.failsafe.alpha_blend_drop_max: 0.0
+    learn.eval_ood.solver.max_iter_ratio: 0.1
+    learn.eval_ood.solver.diverged_ratio: 0.0
+    learn.eval_ood.solver.residual_max: 0.001
+    learn.eval_ood.failsafe.triggered_any: false
+    learn.eval_ood.failsafe.soft_triggered_any: false
+    learn.eval_ood.failsafe.alpha_blend_drop_max: 0.0
 
+  learn_mu_pair_stack_ident_stress:
+    learn.mu_ground_abs_error: 0.05
+    learn.mu_pair_abs_error: 0.05
+    learn.mu_gap_abs_error: 0.03
+    learn.mu_gap_sign_correct: true
+    learn.loss_ratio_val: 0.05
+    learn.ood_enabled: true
+    learn.loss_ratio_ood_worst: 0.05
+    learn.eval_val.solver.max_iter_ratio: 0.1
+    learn.eval_val.solver.diverged_ratio: 0.0
+    learn.eval_val.solver.residual_max: 0.001
+    learn.eval_val.failsafe.triggered_any: false
+    learn.eval_val.failsafe.soft_triggered_any: false
+    learn.eval_val.failsafe.alpha_blend_drop_max: 0.0
+    learn.eval_ood.solver.max_iter_ratio: 0.1
+    learn.eval_ood.solver.diverged_ratio: 0.0
+    learn.eval_ood.solver.residual_max: 0.001
+    learn.eval_ood.failsafe.triggered_any: false
+    learn.eval_ood.failsafe.soft_triggered_any: false
+    learn.eval_ood.failsafe.alpha_blend_drop_max: 0.0

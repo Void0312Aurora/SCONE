@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
@@ -16,6 +16,36 @@ def _as_tensor(value: float | torch.Tensor, *, device: torch.device, dtype: torc
     if isinstance(value, torch.Tensor):
         return value.to(device=device, dtype=dtype)
     return torch.tensor(value, device=device, dtype=dtype)
+
+
+def _resolve_contact_mu(
+    *,
+    default_mu: torch.Tensor,
+    mu_fn: Callable[[dict[str, torch.Tensor]], torch.Tensor] | None,
+    phi: torch.Tensor,
+    vn: torch.Tensor,
+    vt: torch.Tensor,
+    is_pair: bool,
+    material_i: int,
+    material_j: int,
+) -> torch.Tensor:
+    if mu_fn is None:
+        return default_mu
+
+    features = {
+        "phi": phi,
+        "vn": vn,
+        "vt": vt,
+        "is_pair": torch.tensor(1.0 if is_pair else 0.0, device=phi.device, dtype=phi.dtype),
+        "mu_default": default_mu,
+        "material_i": torch.tensor(float(material_i), device=phi.device, dtype=phi.dtype),
+        "material_j": torch.tensor(float(material_j), device=phi.device, dtype=phi.dtype),
+    }
+    mu = mu_fn(features)
+    if not isinstance(mu, torch.Tensor):
+        mu = torch.tensor(float(mu), device=phi.device, dtype=phi.dtype)
+    mu = mu.to(device=phi.device, dtype=phi.dtype)
+    return torch.clamp(mu, min=0.0)
 
 
 def _perp2(v: torch.Tensor) -> torch.Tensor:
@@ -327,11 +357,15 @@ class DiskContactPGSEventLayer(EventLayer):
     gravity: float
     friction_mu: float | torch.Tensor = 0.5
     friction_mu_pair: float | torch.Tensor | None = None
+    friction_mu_fn: Callable[[dict[str, torch.Tensor]], torch.Tensor] | None = None
+    body_material_ids: tuple[int, ...] | None = None
+    ground_material_id: int = 0
     restitution: float = 0.0
     ground_height: float = 0.0
     contact_slop: float = 1e-3
     impact_velocity_min: float = 0.1
     pgs_iters: int = 20
+    pgs_relaxation: float = 1.0
     baumgarte_beta: float = 0.2
     residual_tol: float = 1e-6
     warm_start: bool = True
@@ -374,6 +408,12 @@ class DiskContactPGSEventLayer(EventLayer):
         pos = q[:, :2]
         vel = v[:, :2].clone()
         omega = v[:, 2].clone()
+        if self.body_material_ids is None:
+            material_ids = [0 for _ in range(n_bodies)]
+        else:
+            material_ids = [int(x) for x in self.body_material_ids]
+            if len(material_ids) != n_bodies:
+                raise ValueError("DiskContactPGSEventLayer.body_material_ids length must equal body count")
 
         contacts_work: list[dict[str, Any]] = []
         sleeping_mask = None
@@ -394,7 +434,18 @@ class DiskContactPGSEventLayer(EventLayer):
                 r_j = torch.zeros((2,), device=device, dtype=dtype)
                 v_rel = vel[body_i] + _omega_cross_r(omega[body_i], r_i)
                 vn0 = (v_rel * n).sum()
+                vt0 = (v_rel * t).sum()
                 impact = bool((phi < 0).item() and (vn0 < -v_impact_min).item())
+                mu_c = _resolve_contact_mu(
+                    default_mu=mu_ground,
+                    mu_fn=self.friction_mu_fn,
+                    phi=phi,
+                    vn=vn0,
+                    vt=vt0,
+                    is_pair=False,
+                    material_i=int(material_ids[body_i]),
+                    material_j=int(self.ground_material_id),
+                )
                 contacts_work.append(
                     {
                         "id": f"disk{body_i}-ground",
@@ -407,7 +458,7 @@ class DiskContactPGSEventLayer(EventLayer):
                         "r_j": r_j,
                         "vn0": vn0,
                         "impact": impact,
-                        "mu": mu_ground,
+                        "mu": mu_c,
                         "lambda_n": torch.tensor(0.0, device=device, dtype=dtype),
                         "lambda_t": torch.tensor(0.0, device=device, dtype=dtype),
                     }
@@ -432,7 +483,18 @@ class DiskContactPGSEventLayer(EventLayer):
                 v_j = vel[body_j] + _omega_cross_r(omega[body_j], r_j)
                 v_rel = v_i - v_j
                 vn0 = (v_rel * n).sum()
+                vt0 = (v_rel * t).sum()
                 impact = bool((phi < 0).item() and (vn0 < -v_impact_min).item())
+                mu_c = _resolve_contact_mu(
+                    default_mu=mu_pair,
+                    mu_fn=self.friction_mu_fn,
+                    phi=phi,
+                    vn=vn0,
+                    vt=vt0,
+                    is_pair=True,
+                    material_i=int(material_ids[body_i]),
+                    material_j=int(material_ids[body_j]),
+                )
                 contacts_work.append(
                     {
                         "id": f"disk{body_i}-disk{body_j}",
@@ -445,7 +507,7 @@ class DiskContactPGSEventLayer(EventLayer):
                         "r_j": r_j,
                         "vn0": vn0,
                         "impact": impact,
-                        "mu": mu_pair,
+                        "mu": mu_c,
                         "lambda_n": torch.tensor(0.0, device=device, dtype=dtype),
                         "lambda_t": torch.tensor(0.0, device=device, dtype=dtype),
                     }
@@ -527,6 +589,10 @@ class DiskContactPGSEventLayer(EventLayer):
                     omega = _index_add_row(omega, index=body_i, value=delta_omega_i)
 
         pgs_iters = int(max(1, self.pgs_iters))
+        relaxation = float(self.pgs_relaxation)
+        if not (relaxation > 0.0):
+            relaxation = 1.0
+        relaxation = min(2.0, max(0.1, relaxation))
         residual_tol = torch.tensor(self.residual_tol, device=device, dtype=dtype)
         status = "max_iter"
         residual_max = torch.tensor(float("inf"), device=device, dtype=dtype)
@@ -564,7 +630,7 @@ class DiskContactPGSEventLayer(EventLayer):
                     restitution_target = -torch.tensor(self.restitution, device=device, dtype=dtype) * c["vn0"]
 
                 vn_target = bias + restitution_target
-                delta_lambda_n = (vn_target - vn) / k_n
+                delta_lambda_n = torch.tensor(relaxation, device=device, dtype=dtype) * (vn_target - vn) / k_n
 
                 lambda_n_old = c["lambda_n"]
                 lambda_n_new = torch.clamp(lambda_n_old + delta_lambda_n, min=0.0)
@@ -586,7 +652,7 @@ class DiskContactPGSEventLayer(EventLayer):
                     r_j_cross_t = _cross2(r_j, t)
                     k_t = k_t + (r_j_cross_t * r_j_cross_t) * inv_I
 
-                delta_lambda_t = (-vt) / k_t
+                delta_lambda_t = torch.tensor(relaxation, device=device, dtype=dtype) * (-vt) / k_t
                 lambda_t_old = c["lambda_t"]
                 lambda_t_candidate = lambda_t_old + delta_lambda_t
                 mu_c = c["mu"]

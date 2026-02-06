@@ -57,6 +57,7 @@ def _build_engine(
     contact_slop: float,
     impact_velocity_min: float,
     pgs_iters: int,
+    pgs_relaxation: float,
     baumgarte_beta: float,
     residual_tol: float,
     warm_start: bool,
@@ -88,6 +89,7 @@ def _build_engine(
             contact_slop=contact_slop,
             impact_velocity_min=impact_velocity_min,
             pgs_iters=pgs_iters,
+            pgs_relaxation=pgs_relaxation,
             baumgarte_beta=baumgarte_beta,
             residual_tol=residual_tol,
             warm_start=warm_start,
@@ -276,6 +278,7 @@ def main() -> None:
     parser.add_argument("--impact-velocity-min", type=float, default=0.2)
 
     parser.add_argument("--pgs-iters", type=int, default=20)
+    parser.add_argument("--pgs-relaxation", type=float, default=1.0)
     parser.add_argument("--baumgarte-beta", type=float, default=0.2)
     parser.add_argument("--residual-tol", type=float, default=1e-6)
     parser.add_argument("--warm-start", action="store_true", default=False)
@@ -294,6 +297,7 @@ def main() -> None:
         "contact_slop": float(args.contact_slop),
         "impact_velocity_min": float(args.impact_velocity_min),
         "pgs_iters": int(args.pgs_iters),
+        "pgs_relaxation": float(args.pgs_relaxation),
         "baumgarte_beta": float(args.baumgarte_beta),
         "residual_tol": float(args.residual_tol),
         "warm_start": bool(args.warm_start),

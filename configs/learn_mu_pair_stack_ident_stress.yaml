@@ -1,4 +1,4 @@
-demo: learn_mu_pair_stack_id
+demo: learn_mu_pair_stack_ident_stress
 seed: 0
 dt: 0.01
 dtype: float32
@@ -12,7 +12,7 @@ task:
   mu_ground_init: 0.1
   mu_pair_init: 0.1
   mu_max: 1.0
-  lr: 0.3
+  lr: 0.25
 
   train_iters: 50
   rollout_steps: 5
@@ -26,16 +26,32 @@ task:
   val_vx_range: [0.0, 0.2]
   val_vx_bottom_range: [2.0, 3.0]
 
-  ood:
-    enabled: true
-    dt: 0.02
-    steps: 5
-    n: 4
-    omega_range: [4.0, 10.0]
-    vx_range: [0.0, 0.2]
-    vx_bottom_range: [2.0, 3.0]
-    engine_overrides:
-      mass: 2.0
+  ood_cases:
+    - name: dt_2x
+      dt: 0.02
+      steps: 5
+      n: 4
+      omega_range: [4.0, 10.0]
+      vx_range: [0.0, 0.2]
+      vx_bottom_range: [2.0, 3.0]
+    - name: mass_2x
+      dt: 0.01
+      steps: 5
+      n: 4
+      omega_range: [4.0, 10.0]
+      vx_range: [0.0, 0.2]
+      vx_bottom_range: [2.0, 3.0]
+      engine_overrides:
+        mass: 2.0
+    - name: dt_2x_mass_2x
+      dt: 0.02
+      steps: 5
+      n: 4
+      omega_range: [4.0, 10.0]
+      vx_range: [0.0, 0.2]
+      vx_bottom_range: [2.0, 3.0]
+      engine_overrides:
+        mass: 2.0
 
 engine:
   mass: 1.0

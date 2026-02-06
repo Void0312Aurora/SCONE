@@ -1,4 +1,3 @@
-__all__ = ["ScalarMu"]
+__all__ = ["ScalarMu", "GroundPairMu", "ContactMuMLP", "ContactMuMaterialMLP"]
 
-from .mu import ScalarMu
-
+from .mu import ContactMuMLP, ContactMuMaterialMLP, GroundPairMu, ScalarMu

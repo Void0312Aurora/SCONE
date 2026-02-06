@@ -1,0 +1,31 @@
+suite: learn_mu_field_gate
+
+# Mainline learning regression gate: material-aware mu(x) with material holdout.
+thresholds:
+  learn_mu_field_stack_material_holdout:
+    learn.use_material_features: true
+    learn.ood_enabled: true
+    learn.mu_probe_mae: 0.12
+    learn.mu_probe_mae_seen: 0.12
+    learn.mu_probe_mae_holdout_material: 0.2
+    learn.mu_probe_pair_mae_holdout: 0.2
+    learn.mu_probe_pair_holdout_ratio: 3.0
+    learn.loss_ratio_val: 0.05
+    learn.loss_ratio_ood_worst: 0.35
+    learn.ood_case_metrics.unseen_material4_only.loss_ratio: 0.15
+    learn.ood_case_metrics.holdout_pair_13.loss_ratio: 0.15
+    learn.ood_case_metrics.holdout_pair_13_dt2x.loss_ratio: 0.2
+    learn.ood_case_metrics.holdout_pair_13_dt3x_low_iters.loss_ratio: 0.35
+    learn.ood_case_metrics.holdout_pair_13_dt3x_low_iters.solver_max_iter_ratio: 1.0
+    learn.eval_val.solver.max_iter_ratio: 0.1
+    learn.eval_val.solver.diverged_ratio: 0.0
+    learn.eval_val.solver.residual_max: 0.001
+    learn.eval_val.failsafe.triggered_any: false
+    learn.eval_val.failsafe.soft_triggered_any: false
+    learn.eval_val.failsafe.alpha_blend_drop_max: 0.0
+    learn.eval_ood.solver.max_iter_ratio: 1.0
+    learn.eval_ood.solver.diverged_ratio: 0.0
+    learn.eval_ood.solver.residual_max: 0.005
+    learn.eval_ood.failsafe.triggered_any: false
+    learn.eval_ood.failsafe.soft_triggered_any: false
+    learn.eval_ood.failsafe.alpha_blend_drop_max: 0.0
