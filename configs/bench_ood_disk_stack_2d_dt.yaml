@@ -1,10 +1,10 @@
 demo: disk_stack_2d
 seed: 0
-dt: 0.01
-steps: 500
+dt: 0.02
+steps: 250
 dtype: float64
 
-device: cuda
+device: cpu
 
 params:
   mass: 1.0
@@ -20,7 +20,6 @@ params:
   warm_start: true
   residual_tol: 1.0e-6
 
-  # 3 disks: two supported by ground, one resting on both.
   q0:
     - [-0.6, 0.5, 0.0]
     - [0.6, 0.5, 0.0]
@@ -43,3 +42,4 @@ failsafe:
   solver_residual_hard: 1.0e-2
   v_hard: 100.0
   energy_factor_hard: 100.0
+

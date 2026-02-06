@@ -1,0 +1,36 @@
+suite: mvp_ood
+
+# Thresholds act as a regression gate for `bench/eval.py --suite mvp_ood` outputs.
+# Omitted keys are not checked for that demo.
+thresholds:
+  harmonic_1d:
+    energy.drift_rel_max: 0.05
+    failsafe.triggered_any: false
+    determinism.max_abs_dq: 0.0
+    determinism.max_abs_dv: 0.0
+
+  damped_oscillator_1d:
+    # Energy is expected to decrease; we do not gate on drift here.
+    failsafe.triggered_any: false
+    determinism.max_abs_dq: 0.0
+    determinism.max_abs_dv: 0.0
+
+  bouncing_ball_1d:
+    contacts.penetration_max: 0.02
+    failsafe.triggered_any: false
+    determinism.max_abs_dq: 0.0
+    determinism.max_abs_dv: 0.0
+
+  disk_roll_2d:
+    contacts.penetration_max: 0.005
+    failsafe.triggered_any: false
+    determinism.max_abs_dq: 0.0
+    determinism.max_abs_dv: 0.0
+
+  disk_stack_2d:
+    # Slightly looser than `mvp.yaml` to accommodate OOD dt stress-cases.
+    contacts.penetration_max: 0.006
+    solver.residual_max: 0.001
+    failsafe.triggered_any: false
+    determinism.max_abs_dq: 0.0
+    determinism.max_abs_dv: 0.0

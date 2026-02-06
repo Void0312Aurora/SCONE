@@ -268,18 +268,22 @@ def main() -> None:
                 )
             )
         inertia = float(params.get("inertia", 0.5 * float(params["mass"]) * float(params["radius"]) ** 2))
+        friction_mu_pair = params.get("friction_mu_pair")
         events = DiskContactPGSEventLayer(
             mass=float(params["mass"]),
             inertia=inertia,
             radius=float(params["radius"]),
             gravity=float(params.get("gravity", 9.81)),
             friction_mu=float(params.get("friction_mu", 0.5)),
+            friction_mu_pair=float(friction_mu_pair) if friction_mu_pair is not None else None,
             restitution=float(params.get("restitution", 0.0)),
             ground_height=float(params.get("ground_height", 0.0)),
             contact_slop=float(params.get("contact_slop", 1e-3)),
             impact_velocity_min=float(params.get("impact_velocity_min", 0.1)),
             pgs_iters=int(params.get("pgs_iters", 20)),
             baumgarte_beta=float(params.get("baumgarte_beta", 0.2)),
+            residual_tol=float(params.get("residual_tol", 1e-6)),
+            warm_start=bool(params.get("warm_start", True)),
             sleep=sleep_manager,
         )
     else:

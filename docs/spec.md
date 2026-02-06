@@ -173,6 +173,7 @@ EventLayer.resolve(x***, dt, context) -> (x_next, diag_D)
 - **Hard fail（必须回退）**
   - 数值非法：`NaN/Inf`、求解器崩溃/不返回
   - 穿透/约束严重失稳：`contacts.penetration_max` 或 `constraints.residual_*` 超过硬阈值
+  - 求解器残差严重失稳：`solver.residual_max` 超过硬阈值（例如 `solver_residual_hard`）
 - **Soft fail（优先降级/混合）**
   - 互补/摩擦残差偏大、迭代不充分但仍可运行
   - 账本轻中度异常：在“应耗散”的设置下出现非物理能量增长（需结合容差与已知输入功率判断）
@@ -238,6 +239,11 @@ EventLayer.resolve(x***, dt, context) -> (x_next, diag_D)
 - 黑箱序列模型
 - HNN/PHNN 类（若实现成本可控）
 - 传统物理引擎/求解器（作为“工程基线”）
+
+实现参考（本仓库）：
+- `bench/eval.py`：对 `configs/*.yaml` 跑 rollout，汇总 `penetration / residual / drift / determinism` 等指标到 `outputs/bench/*/bench_summary.json`。
+- `bench/learn_eval.py`：最小可学习切片（训练 + ID/OOD 评测）的 bench，输出结构与 `bench/eval.py` 对齐，便于复用 `bench/compare.py` 做回归门禁。
+- `bench/compare.py`：将 candidate 汇总与 `bench/suites/*.yaml` 的阈值对齐，作为回归门禁（支持 baseline 对比）。
 
 ## 9. 最小可行 Demo（MVP Benchmarks）
 

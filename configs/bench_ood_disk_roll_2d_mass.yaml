@@ -1,0 +1,32 @@
+demo: disk_roll_2d
+seed: 0
+dt: 0.01
+steps: 2000
+dtype: float64
+
+device: cpu
+
+params:
+  mass: 2.0
+  radius: 0.5
+  gravity: 9.81
+  ground_height: 0.0
+  friction_mu: 0.6
+  restitution: 0.0
+  contact_slop: 0.001
+  impact_velocity_min: 0.2
+  q0: [0.0, 0.5, 0.0]
+  v0: [2.0, 0.0, 0.0]
+
+sleep:
+  enabled: true
+  v_sleep: 0.05
+  v_wake: 0.1
+  steps_to_sleep: 10
+  freeze_core: true
+
+failsafe:
+  penetration_hard: 0.05
+  v_hard: 100.0
+  energy_factor_hard: 100.0
+

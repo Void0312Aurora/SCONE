@@ -95,6 +95,20 @@ class Engine:
         soft_reasons: list[str] = []
         if bool((p_diss_signed < -1e-12).item()):
             soft_reasons.append("dissipation_energy_increase")
+
+        failsafe_cfg = context.get("failsafe", {}) if isinstance(context, dict) else {}
+        if isinstance(failsafe_cfg, dict):
+            solver_residual_soft = failsafe_cfg.get("solver_residual_soft")
+            if solver_residual_soft is not None:
+                solver = diagnostics.get("solver", {})
+                if isinstance(solver, dict):
+                    residual = solver.get("residual_max")
+                    if isinstance(residual, torch.Tensor):
+                        residual_value = float(residual.detach().max().cpu().item())
+                    else:
+                        residual_value = float(residual or 0.0)
+                    if residual_value > float(solver_residual_soft):
+                        soft_reasons.append("solver_residual_soft")
         diagnostics["failsafe"]["soft_reasons"] = soft_reasons
 
         hard_reason = _hard_failsafe_reason(
@@ -162,5 +176,17 @@ def _hard_failsafe_reason(
         if base > 0.0:
             if float(energy_after.detach().abs().cpu().item()) > float(energy_factor_hard) * base:
                 return "energy_factor_hard"
+
+    solver_residual_hard = failsafe_cfg.get("solver_residual_hard")
+    if solver_residual_hard is not None:
+        solver = diagnostics.get("solver", {})
+        if isinstance(solver, dict):
+            residual = solver.get("residual_max")
+            if isinstance(residual, torch.Tensor):
+                residual_value = float(residual.detach().max().cpu().item())
+            else:
+                residual_value = float(residual or 0.0)
+            if residual_value > float(solver_residual_hard):
+                return "solver_residual_hard"
 
     return None

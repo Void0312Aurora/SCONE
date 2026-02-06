@@ -65,6 +65,10 @@ def test_disk_stack_pgs_multi_contact_supports_top_disk() -> None:
     next_state, diag = engine.step(state=state, dt=0.01, context={})
 
     assert diag["failsafe"]["triggered"] is False
+    assert "solver" in diag
+    assert "iters" in diag["solver"]
+    assert "residual_max" in diag["solver"]
+    assert diag["solver"]["status"] in {"converged", "max_iter"}
 
     contacts = diag["contacts"]["items"]
     assert isinstance(contacts, list)
@@ -75,6 +79,7 @@ def test_disk_stack_pgs_multi_contact_supports_top_disk() -> None:
     for c in contacts:
         for key in ["id", "body_i", "body_j", "phi", "n", "lambda_n", "lambda_t", "mode", "mode_name", "phi_next"]:
             assert key in c
+    assert "mode_counts" in diag["contacts"]
 
     # Bottom disks are supported by ground; top disk is supported by two contacts.
     assert abs(float(next_state.v[0, 1].item())) < 1e-6

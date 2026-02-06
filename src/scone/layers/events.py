@@ -12,6 +12,12 @@ from scone.sleep import SleepManager
 from scone.state import State
 
 
+def _as_tensor(value: float | torch.Tensor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.to(device=device, dtype=dtype)
+    return torch.tensor(value, device=device, dtype=dtype)
+
+
 def _perp2(v: torch.Tensor) -> torch.Tensor:
     return torch.stack([-v[1], v[0]])
 
@@ -22,6 +28,21 @@ def _cross2(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 def _omega_cross_r(omega: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
     return torch.stack([-omega * r[1], omega * r[0]])
+
+
+def _index_add_row(x: torch.Tensor, *, index: int, value: torch.Tensor) -> torch.Tensor:
+    idx = torch.tensor([int(index)], device=x.device, dtype=torch.long)
+    return torch.index_add(x, 0, idx, value.unsqueeze(0))
+
+
+def _index_add_two_rows(
+    x: torch.Tensor, *, index0: int, value0: torch.Tensor, index1: int | None, value1: torch.Tensor | None
+) -> torch.Tensor:
+    if index1 is None or value1 is None:
+        return _index_add_row(x, index=index0, value=value0)
+    idx = torch.tensor([int(index0), int(index1)], device=x.device, dtype=torch.long)
+    src = torch.stack([value0, value1], dim=0)
+    return torch.index_add(x, 0, idx, src)
 
 
 @dataclass(frozen=True)
@@ -154,7 +175,7 @@ class DiskGroundContactEventLayer(EventLayer):
     inertia: float
     radius: float
     gravity: float
-    friction_mu: float = 0.5
+    friction_mu: float | torch.Tensor = 0.5
     restitution: float = 0.0
     ground_height: float = 0.0
     contact_slop: float = 1e-3
@@ -175,7 +196,7 @@ class DiskGroundContactEventLayer(EventLayer):
         m = torch.tensor(self.mass, device=device, dtype=dtype)
         I = torch.tensor(self.inertia, device=device, dtype=dtype)
         g = torch.tensor(self.gravity, device=device, dtype=dtype)
-        mu = torch.tensor(self.friction_mu, device=device, dtype=dtype)
+        mu = _as_tensor(self.friction_mu, device=device, dtype=dtype)
         slop = torch.tensor(self.contact_slop, device=device, dtype=dtype)
         v_impact_min = torch.tensor(self.impact_velocity_min, device=device, dtype=dtype)
 
@@ -304,13 +325,16 @@ class DiskContactPGSEventLayer(EventLayer):
     inertia: float
     radius: float
     gravity: float
-    friction_mu: float = 0.5
+    friction_mu: float | torch.Tensor = 0.5
+    friction_mu_pair: float | torch.Tensor | None = None
     restitution: float = 0.0
     ground_height: float = 0.0
     contact_slop: float = 1e-3
     impact_velocity_min: float = 0.1
     pgs_iters: int = 20
     baumgarte_beta: float = 0.2
+    residual_tol: float = 1e-6
+    warm_start: bool = True
     sleep: SleepManager | None = None
 
     def resolve(self, state: State, dt: float, context: dict[str, Any]) -> tuple[State, Diagnostics]:
@@ -341,7 +365,8 @@ class DiskContactPGSEventLayer(EventLayer):
         I = torch.tensor(self.inertia, device=device, dtype=dtype)
         inv_I = 1.0 / I
         g = torch.tensor(self.gravity, device=device, dtype=dtype)
-        mu = torch.tensor(self.friction_mu, device=device, dtype=dtype)
+        mu_ground = _as_tensor(self.friction_mu, device=device, dtype=dtype)
+        mu_pair = mu_ground if self.friction_mu_pair is None else _as_tensor(self.friction_mu_pair, device=device, dtype=dtype)
         slop = torch.tensor(self.contact_slop, device=device, dtype=dtype)
         v_impact_min = torch.tensor(self.impact_velocity_min, device=device, dtype=dtype)
         beta = float(self.baumgarte_beta)
@@ -351,6 +376,13 @@ class DiskContactPGSEventLayer(EventLayer):
         omega = v[:, 2].clone()
 
         contacts_work: list[dict[str, Any]] = []
+        sleeping_mask = None
+        if isinstance(context, dict):
+            sleep_ctx = context.get("sleep", {})
+            if isinstance(sleep_ctx, dict):
+                mask = sleep_ctx.get("sleeping_mask")
+                if isinstance(mask, torch.Tensor) and mask.shape == (n_bodies,):
+                    sleeping_mask = mask.to(device=device)
 
         ground_y = ground + radius
         for body_i in range(n_bodies):
@@ -375,6 +407,7 @@ class DiskContactPGSEventLayer(EventLayer):
                         "r_j": r_j,
                         "vn0": vn0,
                         "impact": impact,
+                        "mu": mu_ground,
                         "lambda_n": torch.tensor(0.0, device=device, dtype=dtype),
                         "lambda_t": torch.tensor(0.0, device=device, dtype=dtype),
                     }
@@ -412,6 +445,7 @@ class DiskContactPGSEventLayer(EventLayer):
                         "r_j": r_j,
                         "vn0": vn0,
                         "impact": impact,
+                        "mu": mu_pair,
                         "lambda_n": torch.tensor(0.0, device=device, dtype=dtype),
                         "lambda_t": torch.tensor(0.0, device=device, dtype=dtype),
                     }
@@ -435,8 +469,70 @@ class DiskContactPGSEventLayer(EventLayer):
             }
             return state, diagnostics
 
+        cache: dict[str, Any] | None = None
+        if self.warm_start and isinstance(context, dict):
+            cached = context.setdefault("pgs_cache", {})
+            if isinstance(cached, dict):
+                cache = cached
+
+        if cache is not None:
+            for c in contacts_work:
+                body_i = int(c["body_i"])
+                body_j = int(c["body_j"])
+                if sleeping_mask is not None and (
+                    (body_i >= 0 and bool(sleeping_mask[body_i].item()))
+                    or (body_j >= 0 and bool(sleeping_mask[body_j].item()))
+                ):
+                    continue
+
+                cached = cache.get(str(c["id"]))
+                if not isinstance(cached, dict):
+                    continue
+                lambda_n = cached.get("lambda_n")
+                lambda_t = cached.get("lambda_t")
+                if not isinstance(lambda_n, torch.Tensor):
+                    lambda_n = torch.tensor(float(lambda_n), device=device, dtype=dtype)
+                if not isinstance(lambda_t, torch.Tensor):
+                    lambda_t = torch.tensor(float(lambda_t), device=device, dtype=dtype)
+
+                lambda_n = torch.clamp(lambda_n.to(device=device, dtype=dtype), min=0.0)
+                lambda_t = lambda_t.to(device=device, dtype=dtype)
+                mu_c = c["mu"]
+                friction_limit = mu_c * lambda_n
+                lambda_t = torch.clamp(lambda_t, min=-friction_limit, max=friction_limit)
+
+                c["lambda_n"] = lambda_n
+                c["lambda_t"] = lambda_t
+
+                impulse_n = lambda_n * c["n"]
+                impulse_t = lambda_t * c["t"]
+                impulse = impulse_n + impulse_t
+
+                delta_vel_i = impulse * inv_m
+                if body_j >= 0:
+                    delta_vel_j = -impulse * inv_m
+                    vel = _index_add_two_rows(
+                        vel, index0=body_i, value0=delta_vel_i, index1=body_j, value1=delta_vel_j
+                    )
+                else:
+                    vel = _index_add_row(vel, index=body_i, value=delta_vel_i)
+
+                delta_omega_i = _cross2(c["r_i"], impulse_t) * inv_I
+                if body_j >= 0:
+                    delta_omega_j = _cross2(c["r_j"], -impulse_t) * inv_I
+                    omega = _index_add_two_rows(
+                        omega, index0=body_i, value0=delta_omega_i, index1=body_j, value1=delta_omega_j
+                    )
+                else:
+                    omega = _index_add_row(omega, index=body_i, value=delta_omega_i)
+
         pgs_iters = int(max(1, self.pgs_iters))
-        for _ in range(pgs_iters):
+        residual_tol = torch.tensor(self.residual_tol, device=device, dtype=dtype)
+        status = "max_iter"
+        residual_max = torch.tensor(float("inf"), device=device, dtype=dtype)
+        iters_done = 0
+
+        for iter_index in range(pgs_iters):
             for c in contacts_work:
                 body_i = int(c["body_i"])
                 body_j = int(c["body_j"])
@@ -475,11 +571,13 @@ class DiskContactPGSEventLayer(EventLayer):
                 delta_lambda_n = lambda_n_new - lambda_n_old
                 c["lambda_n"] = lambda_n_new
 
-                if bool((delta_lambda_n != 0.0).item()):
-                    impulse_n = delta_lambda_n * n
-                    vel[body_i] = vel[body_i] + impulse_n * inv_m_i
-                    if body_j >= 0:
-                        vel[body_j] = vel[body_j] - impulse_n * inv_m_j
+                impulse_n = delta_lambda_n * n
+                delta_vel_i = impulse_n * inv_m_i
+                if body_j >= 0:
+                    delta_vel_j = -impulse_n * inv_m_j
+                    vel = _index_add_two_rows(vel, index0=body_i, value0=delta_vel_i, index1=body_j, value1=delta_vel_j)
+                else:
+                    vel = _index_add_row(vel, index=body_i, value=delta_vel_i)
 
                 k_t = inv_m_i + inv_m_j
                 r_i_cross_t = _cross2(r_i, t)
@@ -491,18 +589,82 @@ class DiskContactPGSEventLayer(EventLayer):
                 delta_lambda_t = (-vt) / k_t
                 lambda_t_old = c["lambda_t"]
                 lambda_t_candidate = lambda_t_old + delta_lambda_t
-                friction_limit = mu * c["lambda_n"]
+                mu_c = c["mu"]
+                friction_limit = mu_c * c["lambda_n"]
                 lambda_t_new = torch.clamp(lambda_t_candidate, min=-friction_limit, max=friction_limit)
                 delta_lambda_t = lambda_t_new - lambda_t_old
                 c["lambda_t"] = lambda_t_new
 
-                if bool((delta_lambda_t != 0.0).item()):
-                    impulse_t = delta_lambda_t * t
-                    vel[body_i] = vel[body_i] + impulse_t * inv_m_i
-                    omega[body_i] = omega[body_i] + _cross2(r_i, impulse_t) * inv_I
-                    if body_j >= 0:
-                        vel[body_j] = vel[body_j] - impulse_t * inv_m_j
-                        omega[body_j] = omega[body_j] + _cross2(r_j, -impulse_t) * inv_I
+                impulse_t = delta_lambda_t * t
+                delta_vel_i = impulse_t * inv_m_i
+                if body_j >= 0:
+                    delta_vel_j = -impulse_t * inv_m_j
+                    vel = _index_add_two_rows(vel, index0=body_i, value0=delta_vel_i, index1=body_j, value1=delta_vel_j)
+                else:
+                    vel = _index_add_row(vel, index=body_i, value=delta_vel_i)
+
+                delta_omega_i = _cross2(r_i, impulse_t) * inv_I
+                if body_j >= 0:
+                    delta_omega_j = _cross2(r_j, -impulse_t) * inv_I
+                    omega = _index_add_two_rows(
+                        omega, index0=body_i, value0=delta_omega_i, index1=body_j, value1=delta_omega_j
+                    )
+                else:
+                    omega = _index_add_row(omega, index=body_i, value=delta_omega_i)
+
+            residual_max = torch.tensor(0.0, device=device, dtype=dtype)
+            for c in contacts_work:
+                body_i = int(c["body_i"])
+                body_j = int(c["body_j"])
+                n = c["n"]
+                t = c["t"]
+                r_i = c["r_i"]
+                r_j = c["r_j"]
+
+                v_i = vel[body_i] + _omega_cross_r(omega[body_i], r_i)
+                if body_j >= 0:
+                    v_j = vel[body_j] + _omega_cross_r(omega[body_j], r_j)
+                else:
+                    v_j = torch.zeros((2,), device=device, dtype=dtype)
+
+                v_rel = v_i - v_j
+                vn = (v_rel * n).sum()
+                vt = (v_rel * t).sum()
+
+                penetration = torch.clamp(-(c["phi"] + slop), min=0.0)
+                bias = torch.tensor(beta, device=device, dtype=dtype) * penetration / torch.tensor(
+                    dt, device=device, dtype=dtype
+                )
+                restitution_target = torch.tensor(0.0, device=device, dtype=dtype)
+                if c["impact"]:
+                    restitution_target = -torch.tensor(self.restitution, device=device, dtype=dtype) * c["vn0"]
+                vn_target = bias + restitution_target
+
+                lambda_n = c["lambda_n"]
+                lambda_t = c["lambda_t"]
+                mu_c = c["mu"]
+                friction_limit = mu_c * lambda_n
+
+                if bool((lambda_n > 0.0).item()):
+                    res_n = torch.abs(vn - vn_target)
+                else:
+                    res_n = torch.clamp(vn_target - vn, min=0.0)
+
+                bound_violation = torch.clamp(lambda_t.abs() - friction_limit, min=0.0)
+                stick_threshold = friction_limit - torch.tensor(1e-12, device=device, dtype=dtype)
+                sticking = bool((lambda_t.abs() < stick_threshold).item())
+                if sticking:
+                    res_t = torch.abs(vt)
+                else:
+                    res_t = torch.clamp(lambda_t * vt, min=0.0)
+
+                residual = torch.maximum(res_n, torch.maximum(res_t, bound_violation))
+                residual_max = torch.maximum(residual_max, residual)
+
+            iters_done = iter_index + 1
+            if bool((residual_max <= residual_tol).item()):
+                status = "converged"
+                break
 
         pos_next = pos.clone()
         for c in contacts_work:
@@ -513,7 +675,8 @@ class DiskContactPGSEventLayer(EventLayer):
                 phi = pos_next[body_i, 1] - ground_y
                 if bool((phi < -slop).item()):
                     correction = -(phi + slop)
-                    pos_next[body_i, 1] = pos_next[body_i, 1] + correction
+                    delta_pos = torch.stack([torch.zeros_like(correction), correction])
+                    pos_next = _index_add_row(pos_next, index=body_i, value=delta_pos)
                 continue
 
             delta = pos_next[body_i] - pos_next[body_j]
@@ -529,8 +692,9 @@ class DiskContactPGSEventLayer(EventLayer):
                 weight_i = inv_m
                 weight_j = inv_m
                 total = weight_i + weight_j
-                pos_next[body_i] = pos_next[body_i] + n * correction * (weight_i / total)
-                pos_next[body_j] = pos_next[body_j] - n * correction * (weight_j / total)
+                delta_i = n * correction * (weight_i / total)
+                delta_j = -n * correction * (weight_j / total)
+                pos_next = _index_add_two_rows(pos_next, index0=body_i, value0=delta_i, index1=body_j, value1=delta_j)
 
         next_q = torch.cat([pos_next, q[:, 2:3]], dim=-1)
         next_v = torch.cat([vel, omega.unsqueeze(-1)], dim=-1)
@@ -555,10 +719,12 @@ class DiskContactPGSEventLayer(EventLayer):
             elif bool((c["lambda_n"] <= 0.0).item()):
                 mode = int(ContactMode.ACTIVE)
             else:
-                if float(self.friction_mu) <= 0.0:
+                mu_c = c["mu"]
+                if bool((mu_c <= 0.0).item()):
                     mode = int(ContactMode.ACTIVE)
                 else:
-                    is_sliding = bool((c["lambda_t"].abs() >= (mu * c["lambda_n"] - 1e-12)).item())
+                    friction_limit = mu_c * c["lambda_n"]
+                    is_sliding = bool((c["lambda_t"].abs() >= (friction_limit - 1e-12)).item())
                     mode = int(ContactMode.SLIDING if is_sliding else ContactMode.STICKING)
 
             contact = Contact(
@@ -573,6 +739,7 @@ class DiskContactPGSEventLayer(EventLayer):
             )
             item = contact.to_dict()
             item["phi_next"] = phi_next.detach()
+            item["mu"] = c["mu"].detach() if isinstance(c.get("mu"), torch.Tensor) else c.get("mu")
             contacts_items.append(item)
 
         next_state = base_state
@@ -581,6 +748,17 @@ class DiskContactPGSEventLayer(EventLayer):
             next_state, contacts_items, sleep_diag = self.sleep.apply(
                 state=next_state, contacts=contacts_items, context=context
             )
+
+        if cache is not None:
+            current_ids = {str(c["id"]) for c in contacts_work}
+            for stale in list(cache.keys()):
+                if stale not in current_ids:
+                    del cache[stale]
+            for c in contacts_work:
+                cache[str(c["id"])] = {
+                    "lambda_n": c["lambda_n"].detach(),
+                    "lambda_t": c["lambda_t"].detach(),
+                }
 
         vx0 = v[:, 0]
         vy0 = v[:, 1]
@@ -614,12 +792,23 @@ class DiskContactPGSEventLayer(EventLayer):
                 residual = torch.abs(torch.clamp(lambda_n, min=0.0) * effective_gap)
                 complementarity_residual_max = torch.maximum(complementarity_residual_max, residual)
 
+        mode_counts: dict[str, int] = {}
+        for item in contacts_items:
+            name = str(item.get("mode_name", "unknown"))
+            mode_counts[name] = mode_counts.get(name, 0) + 1
+
         diagnostics: Diagnostics = {
             "contacts": {
                 "penetration_max": penetration_max,
                 "gap_max": gap_max,
                 "complementarity_residual_max": complementarity_residual_max,
                 "items": contacts_items,
+                "mode_counts": mode_counts,
+            },
+            "solver": {
+                "iters": iters_done,
+                "residual_max": residual_max,
+                "status": status,
             },
             "event": {
                 "W_impulse": d_ke.sum(),

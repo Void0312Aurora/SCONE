@@ -1,0 +1,17 @@
+suite: learn_mu
+
+# Thresholds act as a regression gate for `bench/learn_eval.py` outputs.
+# Omitted keys are not checked for that demo.
+thresholds:
+  learn_mu_stack_id:
+    learn.mu_abs_error: 0.1
+    learn.loss_ratio_val: 0.05
+    learn.ood_enabled: true
+    learn.loss_ratio_ood: 0.05
+
+  learn_mu_stack_id_reg:
+    learn.mu_abs_error: 0.1
+    learn.loss_ratio_val: 0.05
+    learn.ood_enabled: true
+    learn.loss_ratio_ood: 0.05
+
